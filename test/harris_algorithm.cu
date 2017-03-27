@@ -344,7 +344,7 @@ int main(int argc, char *argv[]) {
 	char *fileName = argv[1];
 	std::uint8_t  * picturePixelsCPU, * picturePixelsGPU;
 	float threshold=atof(argv[2]);
-	bool equalResults=1;
+	bool equalResults = true;
 	BMP AnImage;
 	
 	//loading grayscale image from BMP24 format (using only red channel)
@@ -364,7 +364,7 @@ int main(int argc, char *argv[]) {
 	//TODO measure time using CUDA events
 
 	//CPU call
-	//harris(picturePixelsCPU, width, height, threshold);
+	harris(picturePixelsCPU, width, height, threshold);
 
 	//Saving the resulting CPU image
 	RGBApixel redDot;
@@ -386,6 +386,7 @@ int main(int argc, char *argv[]) {
 	//GPU call
 	organizeCUDAcall(&picturePixelsGPU[0], &width, &height, &threshold);
 	
+	AnImage.ReadFromFile(fileName);
 	//--Save GPU-generated image
 	for (int i=0;i<height;i++)
 		for (int j=0;j<width;j++)
@@ -400,7 +401,8 @@ int main(int argc, char *argv[]) {
 
 	//checking the results 
 	if (!areTheResultsEqual(height, width, picturePixelsGPU, picturePixelsCPU))
-		equalResults = 0; 
+		equalResults = false; 
+	std::cout << equalResults << std::endl;
 
 	//TODO print out CPU and GPU time
 	return 0;
