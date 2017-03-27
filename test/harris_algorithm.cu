@@ -164,6 +164,8 @@ void organizeCUDAcall(std::uint8_t  *picturePixels, std::uint8_t  * outImage, in
 	//Call kernel
 	kernel<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, thresholdGPU, pictureMeansG);
 
+	cudaDeviceSynchronize();
+
 	//Copy data from device to host
 	cudaMemcpy(outImage, picturePixelsGPU, imageSize * sizeof(std::uint8_t), cudaMemcpyDeviceToHost); 
 
