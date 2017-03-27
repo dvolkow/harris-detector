@@ -155,7 +155,7 @@ void organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, floa
 {
 	//Alloc GPU memory
 	const int imageSize = (* width) * (* height);
-	const int threadCount = 1;
+	const int threadCount = 512;
 	const dim3 blockSize = (*(width)) * (*(height)) / (1 * threadCount);
 
 	std::uint8_t * picturePixelsGPU = NULL;
@@ -358,6 +358,7 @@ int main(int argc, char *argv[]) {
 		for (int j=0;j<width;j++){
 			picturePixelsCPU[i*width+j]=AnImage.GetPixel(j,i).Red;
 		}
+
 	memcpy(&picturePixelsGPU[0],&picturePixelsCPU[0],n*sizeof(std::uint8_t ));
 	
 	//TODO measure time using CUDA events
