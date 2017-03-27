@@ -115,11 +115,13 @@ __device__ float meanOfRGPU(int * j_, int * i_, std::uint8_t * picturePixels, in
 __global__ void fillPictMean(std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_, float * pictureMeans)
 {
 	//--Calc thread ID & local variables
-        int i = threadIdx.x + blockIdx.x * blockDim.x;
-        int j = threadIdx.y + blockIdx.y * blockDim.y;
+	int width = * width_;
+	int height = * height_;
+        int i = (threadIdx.x + blockIdx.x * blockDim.x) / width;
+        int j = (threadIdx.x + blockIdx.x * blockDim.x) % width;
 
-	if (i < (*height_) && j < (*width_))
-			pictureMeans[j + i * (* width_)] = meanOfRGPU(&i, &j, picturePixels, width_, height_, threshold_);
+	if (i < height && j < width)
+			pictureMeans[j + i * width] = meanOfRGPU(&i, &j, picturePixels, width_, height_, threshold_);
 }
 
 
@@ -127,10 +129,10 @@ __global__ void fillPictMean(std::uint8_t * picturePixels, int * width_, int * h
 __global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_, float * pictureMeans)
 {
 	//--Calc thread ID & local variables
-        int i = threadIdx.x + blockIdx.x * blockDim.x;
-        int j = threadIdx.y + blockIdx.y * blockDim.y;
 	int width = * width_;
 	int height = * height_;
+        int i = (threadIdx.x + blockIdx.x * blockDim.x) / width;
+        int j = (threadIdx.x + blockIdx.x * blockDim.x) % width;
 
 	if(i < height && j < width) 
 	{
@@ -155,8 +157,8 @@ void organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, floa
 {
 	//Alloc GPU memory
 	const int imageSize = (* width) * (* height);
-	const int threadCount = 512;
-	const dim3 blockSize = (*(width)) * (*(height)) / (1 * threadCount);
+	dim3 threadCount(*(width));
+	dim3 blockSize(*(height));
 
 	std::uint8_t * picturePixelsGPU = NULL;
 	float * pictureMeansG = NULL;
