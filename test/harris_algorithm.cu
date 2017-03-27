@@ -4,12 +4,19 @@
 #include <cstdint>
 #include <cstddef>
 
-__device__ float meanOfRGPU(int & j, int & i, std::uint8_t * picturePixels, int & width, int & height, float & threshold)
+__device__ float meanOfRGPU(int * j_, int * i_, std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_)
 {
 	float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, a4 = 0.0f, Ix = 0.0f, Iy = 0.0f;
 	float temp;
+
+	//---local var set
+	int i = *i_;
+	int j = *j_;
+	int width = *width_;
+	int height = *height_;
+	float threshold = *threshold_;
  
-	if (i > 0){
+	if (i > 0) {
 		Ix += 2.0f * picturePixels[i-1+(j)*width];
 		if (j > 0){
 			Ix += picturePixels[i-1+(j-1)*width];
@@ -105,18 +112,26 @@ __device__ float meanOfRGPU(int & j, int & i, std::uint8_t * picturePixels, int 
 	return 0;
 }
 
+__global__ void fillPictMean(std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_, float * pictureMeans)
+{
+	//--Calc thread ID & local variables
+        int i = threadIdx.x + blockIdx.x * blockDim.x;
+        int j = threadIdx.y + blockIdx.y * blockDim.y;
+
+	if (i < (*height_) && j < (*width_))
+			pictureMeans[j + i * (* width_)] = meanOfRGPU(&i, &j, picturePixels, width_, height_, threshold_);
+}
+
+
 //Harris detector on CUDA. Calculating R, comparing with threshold, finding local maxima
-__global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_, float * pictureMeans)
+__global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_, float * pictureMeans)
 {
 	//--Calc thread ID & local variables
         int i = threadIdx.x + blockIdx.x * blockDim.x;
         int j = threadIdx.y + blockIdx.y * blockDim.y;
 	int width = * width_;
 	int height = * height_;
-	float threshold = * threshold_;
 
-	if (i < height && j < width)
-			pictureMeans[j + i * width] = meanOfRGPU(i, j, picturePixels, width, height, threshold);
 	if(i < height && j < width) 
 	{
 		bool localMax = 1;
@@ -127,16 +142,16 @@ __global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_
 							localMax=0;
 				}
 
-		if (localMax==1)
-			picturePixels[i*width+j]=1;
+		if (localMax == 1)
+			picturePixels[i*width+j] = 1;
 		else
-			picturePixels[i*width+j]=0;
+			picturePixels[i*width+j] = 0;
 	}
 }
 
 
 //Funtcion to organize CUDA calls
-void organizeCUDAcall(std::uint8_t  *picturePixels, std::uint8_t  * outImage, int *width, int *height, float * threshold)
+void organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, float * threshold)
 {
 	//Alloc GPU memory
 	const int imageSize = (* width) * (* height);
@@ -149,10 +164,10 @@ void organizeCUDAcall(std::uint8_t  *picturePixels, std::uint8_t  * outImage, in
 	int * heightGPU = NULL;
 	float * thresholdGPU = NULL;
 
+	cudaMalloc(&picturePixelsGPU, imageSize * sizeof(std::uint8_t));
 	cudaMalloc(&widthGPU, sizeof(int));
 	cudaMalloc(&heightGPU, sizeof(int));
 	cudaMalloc(&thresholdGPU, sizeof(float));
-	cudaMalloc(&picturePixelsGPU, imageSize * sizeof(std::uint8_t));
 	cudaMalloc(&pictureMeansG, imageSize * sizeof(float));
 
 	//Copy data from host to device 
@@ -162,12 +177,15 @@ void organizeCUDAcall(std::uint8_t  *picturePixels, std::uint8_t  * outImage, in
 	cudaMemcpy(thresholdGPU, threshold, sizeof(float), cudaMemcpyHostToDevice);
 
 	//Call kernel
-	kernel<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, thresholdGPU, pictureMeansG);
+	fillPictMean<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, thresholdGPU, pictureMeansG);
+	cudaDeviceSynchronize();
+	kernel<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, pictureMeansG);
+	cudaDeviceSynchronize();
 
 	cudaDeviceSynchronize();
 
 	//Copy data from device to host
-	cudaMemcpy(outImage, picturePixelsGPU, imageSize * sizeof(std::uint8_t), cudaMemcpyDeviceToHost); 
+	cudaMemcpy(picturePixels, picturePixelsGPU, imageSize * sizeof(std::uint8_t), cudaMemcpyDeviceToHost); 
 
 	//Free memory
 	cudaFree(thresholdGPU);
@@ -342,15 +360,12 @@ int main(int argc, char *argv[]) {
 		}
 	memcpy(&picturePixelsGPU[0],&picturePixelsCPU[0],n*sizeof(std::uint8_t ));
 	
+	//TODO measure time using CUDA events
 
 	//CPU call
-	//TODO measure time using CUDA events
-	//harris(picturePixelsCPU,width,height,threshold);
-	
-	//GPU call
-	organizeCUDAcall(&picturePixelsCPU[0], &picturePixelsGPU[0], &width, &height, &threshold);
-	
-	//saving the resulting image
+	//harris(picturePixelsCPU, width, height, threshold);
+
+	//Saving the resulting CPU image
 	RGBApixel redDot;
 	redDot.Red=255;
 	redDot.Blue=0;
@@ -363,9 +378,13 @@ int main(int argc, char *argv[]) {
 				for (int indexI=-0;indexI<1;indexI++)
 					for (int indexJ=-0;indexJ<1;indexJ++)
 						if ((indexI+i>=0)&&(indexJ+j>=0)&&(indexI+i<height)&&(indexJ+j<width))
-							AnImage.SetPixel(j,i,redDot);
+							AnImage.SetPixel(j, i, redDot);
 	AnImage.WriteToFile("out.bmp");
 
+
+	//GPU call
+	organizeCUDAcall(&picturePixelsGPU[0], &width, &height, &threshold);
+	
 	//--Save GPU-generated image
 	for (int i=0;i<height;i++)
 		for (int j=0;j<width;j++)
@@ -379,8 +398,8 @@ int main(int argc, char *argv[]) {
 
 
 	//checking the results 
-	if (!areTheResultsEqual(height, width,picturePixelsGPU,picturePixelsCPU))
-		equalResults=0; 
+	if (!areTheResultsEqual(height, width, picturePixelsGPU, picturePixelsCPU))
+		equalResults = 0; 
 
 	//TODO print out CPU and GPU time
 	return 0;
