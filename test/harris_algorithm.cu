@@ -6,8 +6,13 @@
 
 #define CORRECT_D ((indexI+i>=0)&&(indexJ+j>=0)&&(indexI+i<height)&&(indexJ+j<width)&&((indexI!=0)||(indexJ!=0)))
 #define CORRECT_A ((pictureMeans[i*width+j]<pictureMeans[(i+indexI)*width+j+indexJ])||(pictureMeans[i*width+j]==0))
+#define CORRECT_tmp ((tmp[i*width+j]<tmp[(i+indexI)*width+j+indexJ])||(tmp[i*width+j]==0))
 
-__device__ __host__ float meanOfRGPU(int * j_, int * i_, std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_)
+//#define SHARED_ENABLE 1
+//#define SIZE_BLOCK 1024
+
+
+__device__ __host__ float meanOfR(int * j_, int * i_, std::uint8_t * picturePixels, int * width_, int * height_, float * threshold_)
 {
 	float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f, a4 = 0.0f, Ix = 0.0f, Iy = 0.0f;
 	float temp;
@@ -122,11 +127,22 @@ __global__ void fillPictMean(std::uint8_t * picturePixels, int * width_, int * h
 	//--Calc thread ID & local variables
 	int width = * width_;
 	int height = * height_;
+#ifdef SHARED_ENABLE
+	__shared__ extern float tmp[];
+#endif
         int i = (threadIdx.x + blockIdx.x * blockDim.x) / width;
         int j = (threadIdx.x + blockIdx.x * blockDim.x) % width;
 
 	if (i < height && j < width)
-			pictureMeans[j + i * width] = meanOfRGPU(&i, &j, picturePixels, width_, height_, threshold_);
+	{
+#ifdef SHARED_ENABLE
+		tmp[j + i * width] = meanOfR(&i, &j, picturePixels, width_, height_, threshold_);	
+		__syncthreads();
+		pictureMeans[j + i * width] = tmp[j + i * width];
+#else
+		pictureMeans[j + i * width] = meanOfR(&i, &j, picturePixels, width_, height_, threshold_);	
+#endif
+	}
 }
 
 
@@ -141,12 +157,28 @@ __global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_
 
 	if(i < height && j < width) 
 	{
+#ifdef SHARED_ENABLE 
+		//load in shared
+		tmp[i * width + j] = pictureMeans[i * width + j];
+		__syncthreads();
+#endif
+
 		bool localMax = 1;
 		for (int indexI = -1; indexI < 2; indexI++)
 			for (int indexJ = -1; indexJ < 2; indexJ++)
+#ifndef SHARED_ENABLE
 				if (CORRECT_D && CORRECT_A)
-							localMax = 0;
-		picturePixels[i*width+j] = 1 && localMax;
+						localMax = 0;
+#else
+				if (CORRECT_D) 
+				{
+					tmp[(i + indexI) * width + j + indexJ] = pictureMeans[(i + indexI) * width + j + indexJ];
+					__syncthreads();
+					if (CORRECT_tmp)
+						localMax = 0;
+				}
+#endif
+		picturePixels[i * width + j] = 1 && localMax;
 	}
 }
 
@@ -188,9 +220,17 @@ float organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, flo
 	cudaMalloc(&pictureMeansG, imageSize * sizeof(float));
 
 	//Call kernel
+#ifdef SHARED_ENABLE 
+	fillPictMean<<<blockSize, threadCount, imageSize * sizeof(float)>>> (picturePixelsGPU, widthGPU, heightGPU, thresholdGPU, pictureMeansG);
+#else
 	fillPictMean<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, thresholdGPU, pictureMeansG);
+#endif
 	cudaDeviceSynchronize();
+#ifdef SHARED_ENABLE 
+	kernel<<<blockSize, threadCount, imageSize * sizeof(float)>>> (picturePixelsGPU, widthGPU, heightGPU, pictureMeansG);
+#else
 	kernel<<<blockSize, threadCount>>> (picturePixelsGPU, widthGPU, heightGPU, pictureMeansG);
+#endif
 	cudaDeviceSynchronize();
 
 	//Copy data from device to host
@@ -219,7 +259,7 @@ void harris (std::uint8_t * picturePixels, int width, int height, float threshol
 
 	for (int i = 0; i < height; i++)
 		for (int j = 0; j < width; j++)
-			pictureMeans[j + i * width] = meanOfRGPU(&i, &j, picturePixels, &width, &height, &threshold);
+			pictureMeans[j + i * width] = meanOfR(&i, &j, picturePixels, &width, &height, &threshold);
 
 	for (int i = 0; i < height; i++)
 		for (int j = 0; j < width; j++) {
