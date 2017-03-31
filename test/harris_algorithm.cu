@@ -151,9 +151,17 @@ __global__ void kernel(std::uint8_t * picturePixels, int * width_, int * height_
 }
 
 
-//Funtcion to organize CUDA calls
-void organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, float * threshold)
+//Funtcion to organize CUDA calls (return time cudaEventRecord)
+float organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, float * threshold)
 {
+	//CUDA events init
+	cudaEvent_t startGPUTime;
+	cudaEvent_t endGPUtime;
+
+	cudaEventCreate(&startGPUTime);
+	cudaEventCreate(&endGPUtime);
+
+	cudaEventRecord(startGPUTime, 0);
 	//Alloc GPU memory
 	const int imageSize = (* width) * (* height);
 	dim3 threadCount(*(width));
@@ -194,6 +202,13 @@ void organizeCUDAcall(std::uint8_t *picturePixels, int *width, int *height, floa
 	cudaFree(widthGPU);
 	cudaFree(picturePixelsGPU);
 	cudaFree(pictureMeansG);
+
+	//Stop -- fix time. Now all GPU activities are stopped
+	cudaEventRecord(endGPUtime, 0);
+	float res = 0;
+	cudaEventSynchronize(endGPUtime);
+	cudaEventElapsedTime(&res, startGPUTime, endGPUtime);
+	return res;
 }
 
 //Harris detector on CPU. Finding local maxima
@@ -262,10 +277,22 @@ int main(int argc, char *argv[]) {
 
 	memcpy(&picturePixelsGPU[0], &picturePixelsCPU[0], n * sizeof(std::uint8_t ));
 	
-	//TODO measure time using CUDA events
+	//Measure time using CUDA events
+	cudaEvent_t startCPUTime;
+	cudaEvent_t endCPUtime;
+	cudaEventCreate(&startCPUTime);
+	cudaEventCreate(&endCPUtime);
 
+	cudaEventRecord(startCPUTime, 0);
+	float cpuTime = 0;
+	
 	//CPU call
 	harris(picturePixelsCPU, width, height, threshold);
+
+	cudaEventRecord(endCPUtime, 0);
+	cudaEventSynchronize(endCPUtime);
+	cudaEventElapsedTime(&cpuTime, startCPUTime, endCPUtime);
+
 
 	//Saving the resulting CPU image
 	RGBApixel redDot;
@@ -284,8 +311,9 @@ int main(int argc, char *argv[]) {
 	AnImage.WriteToFile("out.bmp");
 
 
+	
 	//GPU call
-	organizeCUDAcall(&picturePixelsGPU[0], &width, &height, &threshold);
+	float gpuTime = organizeCUDAcall(&picturePixelsGPU[0], &width, &height, &threshold);
 	
 	AnImage.ReadFromFile(fileName);
 	//--Save GPU-generated image
@@ -303,8 +331,11 @@ int main(int argc, char *argv[]) {
 	//checking the results 
 	if (!areTheResultsEqual(height, width, picturePixelsGPU, picturePixelsCPU))
 		equalResults = false; 
-	std::cout << equalResults << std::endl;
 
-	//TODO print out CPU and GPU time
+	std::cout << "Compare result: " << equalResults << std::endl;
+
+	//Print out CPU and GPU time
+	std::cout << "CPU time: " << cpuTime << std::endl;
+	std::cout << "GPU time: " << gpuTime << std::endl;
 	return 0;
 }
